@@ -1,6 +1,5 @@
-a = 20
-b = 30
+print("Hello Bharat")
 
-print(a + b)
-print(a * b)
-print(a / b)
+print("Welcome to Smart Money Engine")
+
+print("Version 1.0")
