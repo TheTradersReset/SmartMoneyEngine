@@ -1,5 +1,14 @@
-print("Hello Bharat")
+from src.core.logger import logger
+from src.core.config import *
 
-print("Welcome to Smart Money Engine")
+logger.info("Engine Started")
 
-print("Version 1.0")
+print(BASE_DIR)
+
+print(DATA_DIR)
+
+print(DEFAULT_SYMBOL)
+
+print(DEFAULT_TIMEFRAME)
+
+print(DEFAULT_CAPITAL)
