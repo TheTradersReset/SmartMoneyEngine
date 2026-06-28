@@ -1,18 +1,28 @@
+"""
+Custom Exceptions for Smart Money Engine
+"""
+
+
 class SmartMoneyEngineError(Exception):
-    """Base Exception for Smart Money Engine"""
+    """Base Exception"""
     pass
 
 
-class DataNotFoundError(SmartMoneyEngineError):
-    """Raised when market data is missing"""
+class CSVFileNotFoundError(SmartMoneyEngineError):
+    """Raised when CSV file is not found"""
     pass
 
 
-class InvalidDataError(SmartMoneyEngineError):
-    """Raised when data format is invalid"""
+class InvalidCSVFormatError(SmartMoneyEngineError):
+    """Raised when CSV format is invalid"""
     pass
 
 
-class IndicatorCalculationError(SmartMoneyEngineError):
-    """Raised when indicator calculation fails"""
+class MissingColumnError(SmartMoneyEngineError):
+    """Raised when required columns are missing"""
+    pass
+
+
+class EmptyDataFrameError(SmartMoneyEngineError):
+    """Raised when dataframe is empty"""
     pass

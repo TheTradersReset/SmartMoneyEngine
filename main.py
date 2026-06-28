@@ -1,14 +1,7 @@
-from src.core.logger import logger
-from src.core.config import *
+from src.core.data_loader import DataLoader
 
-logger.info("Engine Started")
+loader = DataLoader()
 
-print(BASE_DIR)
+df = loader.load_csv("data/sample/nifty_sample.csv")
 
-print(DATA_DIR)
-
-print(DEFAULT_SYMBOL)
-
-print(DEFAULT_TIMEFRAME)
-
-print(DEFAULT_CAPITAL)
+print(df)
