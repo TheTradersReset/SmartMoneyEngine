@@ -9,12 +9,19 @@ from src.core.exceptions import (
     InvalidCSVFormatError,
     MissingColumnError,
     EmptyDataFrameError,
+    InvalidDataTypeError
 )
 
 
 class DataLoader:
     """
-    Responsible for loading and validating market data.
+    Responsible for:
+
+    - Loading CSV
+    - Validating Columns
+    - Validating Datatypes
+
+    Returns a clean pandas DataFrame.
     """
 
     REQUIRED_COLUMNS = [
@@ -23,50 +30,61 @@ class DataLoader:
         "High",
         "Low",
         "Close",
-        "Volume",
+        "Volume"
+    ]
+
+    NUMERIC_COLUMNS = [
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume"
     ]
 
     def __init__(self):
         self.data = None
 
-    def load_csv(self, file_path: str):
-        """
-        Load CSV file into a Pandas DataFrame.
-        """
+    # -------------------------------------------------
+    # Load CSV
+    # -------------------------------------------------
 
-        path = Path(file_path)
+    def load_csv(self, file_path):
 
-        logger.info(f"Loading CSV file: {path}")
+        logger.info(f"Loading CSV file: {file_path}")
 
-        # Check if file exists
-        if not path.exists():
-            logger.error(f"CSV file not found: {path}")
-            raise CSVFileNotFoundError(f"{path} does not exist.")
+        file_path = Path(file_path)
 
-        # Read CSV
+        if not file_path.exists():
+            raise CSVFileNotFoundError(
+                f"CSV file not found: {file_path}"
+            )
+
         try:
-            self.data = pd.read_csv(path)
+            self.data = pd.read_csv(file_path)
 
         except Exception as e:
-            logger.error(str(e))
             raise InvalidCSVFormatError(str(e))
 
-        # Check empty dataframe
         if self.data.empty:
-            logger.error("CSV file is empty.")
-            raise EmptyDataFrameError("CSV file is empty.")
+            raise EmptyDataFrameError(
+                "CSV file is empty."
+            )
 
-        # Validate required columns
         self.validate_columns()
 
-        logger.info(f"Successfully loaded {len(self.data)} rows.")
+        self.validate_datatypes()
+
+        logger.info(
+            f"Successfully loaded {len(self.data)} rows."
+        )
 
         return self.data
 
+    # -------------------------------------------------
+    # Column Validation
+    # -------------------------------------------------
+
     def validate_columns(self):
-        """
-        Validate all required columns are present.
-        """
 
         missing_columns = [
             column
@@ -75,12 +93,59 @@ class DataLoader:
         ]
 
         if missing_columns:
-            logger.error(
-                f"Missing required columns: {missing_columns}"
-            )
 
             raise MissingColumnError(
-                f"Required columns missing: {missing_columns}"
+                f"Missing columns: {missing_columns}"
             )
 
-        logger.info("Column validation successful.")
+        logger.info(
+            "Column validation successful."
+        )
+
+    # -------------------------------------------------
+    # Datatype Validation
+    # -------------------------------------------------
+
+    def validate_datatypes(self):
+
+        logger.info(
+            "Validating datatypes..."
+        )
+
+        # Convert Date column
+
+        try:
+
+            self.data["Date"] = pd.to_datetime(
+                self.data["Date"]
+            )
+
+        except Exception:
+
+            raise InvalidDataTypeError(
+                "Date column contains invalid values."
+            )
+
+        logger.info(
+            "Date column validated."
+        )
+
+        # Convert Numeric Columns
+
+        for column in self.NUMERIC_COLUMNS:
+
+            try:
+
+                self.data[column] = pd.to_numeric(
+                    self.data[column]
+                )
+
+            except Exception:
+
+                raise InvalidDataTypeError(
+                    f"{column} contains invalid numeric values."
+                )
+
+        logger.info(
+            "Numeric column validation successful."
+        )
