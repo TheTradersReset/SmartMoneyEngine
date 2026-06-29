@@ -13,12 +13,13 @@ from src.core.exceptions import (
     MissingValueError,
     DuplicateDataError,
     DuplicateDateError,
-    FutureDateError
+    FutureDateError,
+    InvalidOHLCError,
+    InvalidVolumeError,
 )
 
 
 class DataLoader:
-
     """
     Responsible for:
 
@@ -28,8 +29,10 @@ class DataLoader:
     - Missing Value Validation
     - Duplicate Row Validation
     - Date Validation
+    - OHLC Validation
+    - Volume Validation
 
-    Returns clean DataFrame.
+    Returns clean pandas DataFrame.
     """
 
     REQUIRED_COLUMNS = [
@@ -38,7 +41,7 @@ class DataLoader:
         "High",
         "Low",
         "Close",
-        "Volume"
+        "Volume",
     ]
 
     NUMERIC_COLUMNS = [
@@ -46,7 +49,7 @@ class DataLoader:
         "High",
         "Low",
         "Close",
-        "Volume"
+        "Volume",
     ]
 
     def __init__(self):
@@ -88,6 +91,10 @@ class DataLoader:
 
         self.validate_dates()
 
+        self.validate_ohlc()
+
+        self.validate_volume()
+
         logger.info(
             f"Successfully loaded {len(self.data)} rows."
         )
@@ -99,6 +106,8 @@ class DataLoader:
     # =====================================================
 
     def validate_columns(self):
+
+        logger.info("Validating required columns...")
 
         missing_columns = [
             column
@@ -128,7 +137,7 @@ class DataLoader:
 
         except Exception:
             raise InvalidDataTypeError(
-                "Date column contains invalid values."
+                "Invalid values found in Date column."
             )
 
         logger.info("Date column validated.")
@@ -189,12 +198,8 @@ class DataLoader:
 
         if not duplicate_rows.empty:
 
-            duplicate_indexes = (
-                duplicate_rows.index.tolist()
-            )
-
             raise DuplicateDataError(
-                f"Duplicate rows found at indexes: {duplicate_indexes}"
+                f"Duplicate rows found at indexes: {duplicate_rows.index.tolist()}"
             )
 
         logger.info("No duplicate rows found.")
@@ -207,13 +212,11 @@ class DataLoader:
 
         logger.info("Validating dates...")
 
-        # Sort dates
-
-        self.data = self.data.sort_values(
-            by="Date"
-        ).reset_index(drop=True)
-
-        # Duplicate Dates
+        self.data = (
+            self.data
+            .sort_values("Date")
+            .reset_index(drop=True)
+        )
 
         duplicate_dates = self.data[
             self.data["Date"].duplicated()
@@ -225,9 +228,7 @@ class DataLoader:
                 "Duplicate dates found."
             )
 
-        # Future Dates
-
-        today = pd.Timestamp.today()
+        today = pd.Timestamp.today().normalize()
 
         future_dates = self.data[
             self.data["Date"] > today
@@ -239,6 +240,52 @@ class DataLoader:
                 "Future dates detected."
             )
 
-        logger.info(
-            "Date validation successful."
-        )
+        logger.info("Date validation successful.")
+
+    # =====================================================
+    # OHLC Validation
+    # =====================================================
+
+    def validate_ohlc(self):
+
+        logger.info("Validating OHLC values...")
+
+        invalid_rows = self.data[
+            (self.data["High"] < self.data["Open"]) |
+            (self.data["High"] < self.data["Close"]) |
+            (self.data["Low"] > self.data["Open"]) |
+            (self.data["Low"] > self.data["Close"]) |
+            (self.data["High"] < self.data["Low"]) |
+            (self.data["Open"] <= 0) |
+            (self.data["High"] <= 0) |
+            (self.data["Low"] <= 0) |
+            (self.data["Close"] <= 0)
+        ]
+
+        if not invalid_rows.empty:
+
+            raise InvalidOHLCError(
+                f"Invalid OHLC values found at rows: {invalid_rows.index.tolist()}"
+            )
+
+        logger.info("OHLC validation successful.")
+
+    # =====================================================
+    # Volume Validation
+    # =====================================================
+
+    def validate_volume(self):
+
+        logger.info("Validating Volume...")
+
+        invalid_rows = self.data[
+            self.data["Volume"] <= 0
+        ]
+
+        if not invalid_rows.empty:
+
+            raise InvalidVolumeError(
+                f"Invalid Volume found at rows: {invalid_rows.index.tolist()}"
+            )
+
+        logger.info("Volume validation successful.")

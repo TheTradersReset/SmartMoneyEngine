@@ -69,5 +69,10 @@ class FutureDateError(SmartMoneyEngineError):
 
 
 class InvalidOHLCError(SmartMoneyEngineError):
-    """Raised when OHLC values are logically incorrect."""
+    """Raised when OHLC values are invalid."""
+    pass
+
+
+class InvalidVolumeError(SmartMoneyEngineError):
+    """Raised when Volume values are invalid."""
     pass
