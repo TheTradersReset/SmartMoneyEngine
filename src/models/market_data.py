@@ -1,52 +1,79 @@
-from dataclasses import dataclass
+from __future__ import annotations
 
 import pandas as pd
 
 
-@dataclass
 class MarketData:
     """
-    Represents validated market data.
+    Wrapper around pandas DataFrame.
 
-    Every indicator will receive this object.
+    Every indicator in SmartMoneyEngine
+    will work with this class instead
+    of directly modifying DataFrames.
     """
 
-    dataframe: pd.DataFrame
+    def __init__(self, dataframe: pd.DataFrame):
+        self.data = dataframe
+
+    # -------------------------
+    # Basic Properties
+    # -------------------------
 
     @property
-    def open(self):
-
-        return self.dataframe["Open"]
-
-    @property
-    def high(self):
-
-        return self.dataframe["High"]
+    def rows(self) -> int:
+        return len(self.data)
 
     @property
-    def low(self):
-
-        return self.dataframe["Low"]
-
-    @property
-    def close(self):
-
-        return self.dataframe["Close"]
-
-    @property
-    def volume(self):
-
-        return self.dataframe["Volume"]
-
-    @property
-    def date(self):
-
-        return self.dataframe["Date"]
-
-    def rows(self):
-
-        return len(self.dataframe)
-
     def columns(self):
+        return list(self.data.columns)
 
-        return self.dataframe.columns.tolist()
+    @property
+    def shape(self):
+        return self.data.shape
+
+    # -------------------------
+    # Column Operations
+    # -------------------------
+
+    def has_column(self, column: str) -> bool:
+        return column in self.data.columns
+
+    def get_column(self, column: str):
+        return self.data[column]
+
+    def add_column(self, column: str, values):
+        self.data[column] = values
+
+    def remove_column(self, column: str):
+        if self.has_column(column):
+            self.data.drop(columns=[column], inplace=True)
+
+    def rename_column(self, old: str, new: str):
+        self.data.rename(columns={old: new}, inplace=True)
+
+    # -------------------------
+    # Copy
+    # -------------------------
+
+    def copy(self):
+        return MarketData(self.data.copy())
+
+    # -------------------------
+    # Display
+    # -------------------------
+
+    def head(self, rows: int = 5):
+        return self.data.head(rows)
+
+    def tail(self, rows: int = 5):
+        return self.data.tail(rows)
+
+    # -------------------------
+    # Utility
+    # -------------------------
+
+    def __len__(self):
+        return len(self.data)
+
+    def __repr__(self):
+        return repr(self.data)
