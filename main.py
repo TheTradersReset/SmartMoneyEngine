@@ -1,6 +1,9 @@
 from src.core.data_loader import DataLoader
 from src.models.market_data import MarketData
 
+from src.indicators.ema import EMA
+
+
 loader = DataLoader()
 
 df = loader.load_csv(
@@ -9,11 +12,9 @@ df = loader.load_csv(
 
 market = MarketData(df)
 
-print()
+ema20 = EMA(period=20)
 
-print("Rows :", market.rows())
-
-print("Columns :", market.columns())
+market = ema20.calculate(market)
 
 print()
 
