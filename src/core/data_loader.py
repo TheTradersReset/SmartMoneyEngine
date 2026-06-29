@@ -9,7 +9,8 @@ from src.core.exceptions import (
     InvalidCSVFormatError,
     MissingColumnError,
     EmptyDataFrameError,
-    InvalidDataTypeError
+    InvalidDataTypeError,
+    MissingValueError,
 )
 
 
@@ -18,8 +19,9 @@ class DataLoader:
     Responsible for:
 
     - Loading CSV
-    - Validating Columns
-    - Validating Datatypes
+    - Validating required columns
+    - Validating datatypes
+    - Validating missing values
 
     Returns a clean pandas DataFrame.
     """
@@ -74,6 +76,8 @@ class DataLoader:
 
         self.validate_datatypes()
 
+        self.validate_missing_values()
+
         logger.info(
             f"Successfully loaded {len(self.data)} rows."
         )
@@ -93,14 +97,11 @@ class DataLoader:
         ]
 
         if missing_columns:
-
             raise MissingColumnError(
                 f"Missing columns: {missing_columns}"
             )
 
-        logger.info(
-            "Column validation successful."
-        )
+        logger.info("Column validation successful.")
 
     # -------------------------------------------------
     # Datatype Validation
@@ -108,44 +109,55 @@ class DataLoader:
 
     def validate_datatypes(self):
 
-        logger.info(
-            "Validating datatypes..."
-        )
-
-        # Convert Date column
+        logger.info("Validating datatypes...")
 
         try:
-
             self.data["Date"] = pd.to_datetime(
                 self.data["Date"]
             )
 
         except Exception:
-
             raise InvalidDataTypeError(
                 "Date column contains invalid values."
             )
 
-        logger.info(
-            "Date column validated."
-        )
-
-        # Convert Numeric Columns
+        logger.info("Date column validated.")
 
         for column in self.NUMERIC_COLUMNS:
 
             try:
-
                 self.data[column] = pd.to_numeric(
                     self.data[column]
                 )
 
             except Exception:
-
                 raise InvalidDataTypeError(
                     f"{column} contains invalid numeric values."
                 )
 
-        logger.info(
-            "Numeric column validation successful."
-        )
+        logger.info("Numeric column validation successful.")
+
+    # -------------------------------------------------
+    # Missing Value Validation
+    # -------------------------------------------------
+
+    def validate_missing_values(self):
+
+        logger.info("Checking missing values...")
+
+        missing_summary = self.data.isnull().sum()
+
+        missing_columns = missing_summary[
+            missing_summary > 0
+        ]
+
+        if not missing_columns.empty:
+
+            error_message = "\nMissing values found:\n"
+
+            for column, count in missing_columns.items():
+                error_message += f"{column}: {count}\n"
+
+            raise MissingValueError(error_message)
+
+        logger.info("No missing values found.")
