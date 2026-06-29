@@ -11,19 +11,25 @@ from src.core.exceptions import (
     EmptyDataFrameError,
     InvalidDataTypeError,
     MissingValueError,
+    DuplicateDataError,
+    DuplicateDateError,
+    FutureDateError
 )
 
 
 class DataLoader:
+
     """
     Responsible for:
 
     - Loading CSV
-    - Validating required columns
-    - Validating datatypes
-    - Validating missing values
+    - Column Validation
+    - Datatype Validation
+    - Missing Value Validation
+    - Duplicate Row Validation
+    - Date Validation
 
-    Returns a clean pandas DataFrame.
+    Returns clean DataFrame.
     """
 
     REQUIRED_COLUMNS = [
@@ -46,9 +52,9 @@ class DataLoader:
     def __init__(self):
         self.data = None
 
-    # -------------------------------------------------
+    # =====================================================
     # Load CSV
-    # -------------------------------------------------
+    # =====================================================
 
     def load_csv(self, file_path):
 
@@ -78,15 +84,19 @@ class DataLoader:
 
         self.validate_missing_values()
 
+        self.validate_duplicate_rows()
+
+        self.validate_dates()
+
         logger.info(
             f"Successfully loaded {len(self.data)} rows."
         )
 
         return self.data
 
-    # -------------------------------------------------
+    # =====================================================
     # Column Validation
-    # -------------------------------------------------
+    # =====================================================
 
     def validate_columns(self):
 
@@ -103,9 +113,9 @@ class DataLoader:
 
         logger.info("Column validation successful.")
 
-    # -------------------------------------------------
+    # =====================================================
     # Datatype Validation
-    # -------------------------------------------------
+    # =====================================================
 
     def validate_datatypes(self):
 
@@ -137,9 +147,9 @@ class DataLoader:
 
         logger.info("Numeric column validation successful.")
 
-    # -------------------------------------------------
+    # =====================================================
     # Missing Value Validation
-    # -------------------------------------------------
+    # =====================================================
 
     def validate_missing_values(self):
 
@@ -156,8 +166,79 @@ class DataLoader:
             error_message = "\nMissing values found:\n"
 
             for column, count in missing_columns.items():
-                error_message += f"{column}: {count}\n"
+
+                error_message += (
+                    f"{column}: {count}\n"
+                )
 
             raise MissingValueError(error_message)
 
         logger.info("No missing values found.")
+
+    # =====================================================
+    # Duplicate Row Validation
+    # =====================================================
+
+    def validate_duplicate_rows(self):
+
+        logger.info("Checking duplicate rows...")
+
+        duplicate_rows = self.data[
+            self.data.duplicated()
+        ]
+
+        if not duplicate_rows.empty:
+
+            duplicate_indexes = (
+                duplicate_rows.index.tolist()
+            )
+
+            raise DuplicateDataError(
+                f"Duplicate rows found at indexes: {duplicate_indexes}"
+            )
+
+        logger.info("No duplicate rows found.")
+
+    # =====================================================
+    # Date Validation
+    # =====================================================
+
+    def validate_dates(self):
+
+        logger.info("Validating dates...")
+
+        # Sort dates
+
+        self.data = self.data.sort_values(
+            by="Date"
+        ).reset_index(drop=True)
+
+        # Duplicate Dates
+
+        duplicate_dates = self.data[
+            self.data["Date"].duplicated()
+        ]
+
+        if not duplicate_dates.empty:
+
+            raise DuplicateDateError(
+                "Duplicate dates found."
+            )
+
+        # Future Dates
+
+        today = pd.Timestamp.today()
+
+        future_dates = self.data[
+            self.data["Date"] > today
+        ]
+
+        if not future_dates.empty:
+
+            raise FutureDateError(
+                "Future dates detected."
+            )
+
+        logger.info(
+            "Date validation successful."
+        )
