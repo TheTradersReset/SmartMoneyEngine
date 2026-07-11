@@ -1,6 +1,34 @@
+# Python
 .venv/
 .env
 __pycache__/
-logs/
-outputs/
 *.pyc
+
+# Logs
+logs/
+*.log
+fyersApi.log
+fyersRequests.log
+
+# Generated Outputs
+outputs/
+validation/
+validation_output.csv
+review_summary.csv
+
+# Tokens / Secrets
+data/tokens/
+
+# Historical Data
+data/historical/
+
+# Reports
+data/reports/
+
+# IDE
+.vscode/
+.idea/
+
+# OS Files
+.DS_Store
+Thumbs.db
