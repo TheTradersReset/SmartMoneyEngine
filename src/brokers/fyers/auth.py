@@ -2,15 +2,20 @@
 Fyers OAuth2 authentication for SmartMoneyEngine.
 
 Loads broker configuration, completes the browser-based login flow,
-exchanges the authorization code for an access token, and persists the
-token response to ``data/tokens/fyers_token.json``.
+exchanges the authorization code for an access token, refreshes expired
+tokens automatically, and persists tokens to ``data/tokens/fyers_token.json``.
 """
 
 from __future__ import annotations
 
+import argparse
+import base64
+import hashlib
 import json
+import os
 import sys
 import threading
+import time
 import webbrowser
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -27,9 +32,14 @@ from src.core.logger import logger
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TOKEN_PATH = PROJECT_ROOT / "data" / "tokens" / "fyers_token.json"
 DEFAULT_CALLBACK_TIMEOUT_SECONDS = 300
+REFRESH_TOKEN_URL = "https://api-t1.fyers.in/api/v3/validate-refresh-token"
+TOKEN_EXPIRY_BUFFER_SECONDS = 60
 OAUTH_STATE = "smartmoneyengine"
 OAUTH_RESPONSE_TYPE = "code"
 OAUTH_GRANT_TYPE = "authorization_code"
+REFRESH_GRANT_TYPE = "refresh_token"
+
+_REFRESH_LOCK = threading.Lock()
 
 SUCCESS_HTML = """
 <!DOCTYPE html>
@@ -96,6 +106,94 @@ class CallbackResult:
 
     auth_code: str | None = None
     error_message: str | None = None
+
+
+def normalize_raw_access_token(access_token: str) -> str:
+    """Strip optional ``app_id:`` prefix; return raw JWT / token body."""
+    token = access_token.strip()
+    if ":" in token:
+        _, _, token = token.partition(":")
+        token = token.strip()
+    if not token:
+        raise AuthenticationError("Access token is empty after normalization.")
+    return token
+
+
+def format_ws_access_token(app_id: str, access_token: str) -> str:
+    """Build FYERS websocket token ``{app_id}:{raw_jwt}``."""
+    if not app_id or not app_id.strip():
+        raise AuthenticationError("FYERS app_id is required for websocket token formatting.")
+    raw = normalize_raw_access_token(access_token)
+    return f"{app_id.strip()}:{raw}"
+
+
+def load_token_file(token_path: Path | None = None) -> dict[str, Any]:
+    """Load the persisted FYERS token JSON bundle."""
+    destination = token_path if token_path is not None else DEFAULT_TOKEN_PATH
+    if not destination.exists():
+        raise AuthenticationError(f"Fyers token file not found: {destination}")
+
+    try:
+        with destination.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise AuthenticationError(f"Invalid JSON in token file: {destination}") from exc
+
+    if not isinstance(payload, dict):
+        raise AuthenticationError("Token file must contain a JSON object.")
+
+    access_token = payload.get("access_token")
+    if not isinstance(access_token, str) or not access_token.strip():
+        raise AuthenticationError(f"'access_token' missing or empty in {destination}")
+
+    if payload.get("s") not in (None, "ok"):
+        raise AuthenticationError(
+            f"Token file indicates unsuccessful authentication: {destination}"
+        )
+
+    return payload
+
+
+def access_token_expiry(access_token: str) -> int | None:
+    """Return JWT ``exp`` epoch seconds for a raw or prefixed access token."""
+    raw = normalize_raw_access_token(access_token)
+    parts = raw.split(".")
+    if len(parts) < 2:
+        return None
+    payload_b64 = parts[1]
+    padding = "=" * (-len(payload_b64) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload_b64 + padding)
+        payload = json.loads(decoded.decode("utf-8"))
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    exp = payload.get("exp")
+    return int(exp) if isinstance(exp, (int, float)) else None
+
+
+def is_access_token_valid(
+    access_token: str,
+    *,
+    buffer_seconds: int = TOKEN_EXPIRY_BUFFER_SECONDS,
+) -> bool:
+    """Return True when JWT ``exp`` is still in the future (with buffer)."""
+    exp = access_token_expiry(access_token)
+    if exp is None:
+        return False
+    return exp - int(time.time()) > buffer_seconds
+
+
+def _resolve_pin(pin: str | None = None) -> str | None:
+    if pin is not None and str(pin).strip():
+        return str(pin).strip()
+    env_pin = os.getenv("FYERS_PIN")
+    if env_pin and env_pin.strip():
+        return env_pin.strip()
+    return None
+
+
+def _app_id_hash(config: Config) -> str:
+    return hashlib.sha256(f"{config.app_id}:{config.secret_key}".encode()).hexdigest()
 
 
 def _create_session(config: Config) -> fyersModel.SessionModel:
@@ -380,6 +478,57 @@ def exchange_token(config: Config, auth_code: str) -> dict[str, Any]:
     return _validate_token_response(response)
 
 
+def refresh_access_token(
+    config: Config,
+    refresh_token: str,
+    pin: str,
+) -> dict[str, Any]:
+    """
+    Refresh an expired access token using FYERS ``validate-refresh-token``.
+
+    Parameters
+    ----------
+    config : Config
+        Loaded Fyers configuration.
+    refresh_token : str
+        Persisted refresh token.
+    pin : str
+        FYERS account PIN.
+
+    Returns
+    -------
+    dict[str, Any]
+        Validated token response from Fyers.
+    """
+    if not refresh_token or not refresh_token.strip():
+        raise AuthenticationError("Refresh token is empty.")
+    if not pin or not pin.strip():
+        raise AuthenticationError(
+            "FYERS_PIN is required for refresh-token authentication."
+        )
+
+    payload = {
+        "grant_type": REFRESH_GRANT_TYPE,
+        "appIdHash": _app_id_hash(config),
+        "refresh_token": refresh_token.strip(),
+        "pin": pin.strip(),
+    }
+    logger.info("Refreshing FYERS access token via validate-refresh-token.")
+    try:
+        response = requests.post(
+            REFRESH_TOKEN_URL,
+            headers={"Content-Type": "application/json"},
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        token_data = response.json()
+    except requests.RequestException as exc:
+        raise NetworkError(f"Network error while refreshing access token: {exc}") from exc
+
+    return _validate_token_response(token_data)
+
+
 def save_token(
     token_data: dict[str, Any],
     token_path: Path | None = None,
@@ -408,6 +557,85 @@ def save_token(
 
     logger.info("Fyers token saved to %s", destination)
     return destination
+
+
+def _merge_refreshed_token(
+    refreshed: dict[str, Any],
+    previous: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(previous)
+    merged.update(refreshed)
+    if not merged.get("refresh_token"):
+        merged["refresh_token"] = previous.get("refresh_token")
+    return merged
+
+
+def ensure_valid_access_token(
+    token_path: Path | None = None,
+    *,
+    pin: str | None = None,
+    allow_interactive_oauth: bool = True,
+    force_refresh: bool = False,
+) -> str:
+    """
+    Return a valid access token, refreshing or re-authenticating when needed.
+
+    Recovery order:
+    1. Use current access token if JWT ``exp`` is valid.
+    2. Refresh with ``refresh_token`` + ``FYERS_PIN``.
+    3. Run interactive OAuth via ``authenticate()`` when allowed.
+    """
+    destination = token_path if token_path is not None else DEFAULT_TOKEN_PATH
+
+    with _REFRESH_LOCK:
+        config = load_config()
+
+        if not destination.exists():
+            logger.warning("Token file missing at %s", destination)
+            if not allow_interactive_oauth:
+                raise AuthenticationError(
+                    f"Token file not found: {destination}. Run OAuth login first."
+                )
+            token_data = authenticate(token_path=destination)
+            return normalize_raw_access_token(str(token_data["access_token"]))
+
+        bundle = load_token_file(destination)
+        access_token = normalize_raw_access_token(str(bundle["access_token"]))
+
+        if not force_refresh and is_access_token_valid(access_token):
+            logger.info("FYERS access token is valid.")
+            return access_token
+
+        logger.warning("FYERS access token expired or near expiry.")
+        refresh_value = bundle.get("refresh_token")
+        pin_value = _resolve_pin(pin)
+
+        if isinstance(refresh_value, str) and refresh_value.strip() and pin_value:
+            try:
+                refreshed = refresh_access_token(config, refresh_value, pin_value)
+                merged = _merge_refreshed_token(refreshed, bundle)
+                save_token(merged, token_path=destination)
+                new_access = normalize_raw_access_token(str(merged["access_token"]))
+                logger.info("FYERS access token refreshed successfully.")
+                return new_access
+            except AuthenticationError as exc:
+                logger.warning("FYERS refresh-token flow failed: %s", exc)
+        else:
+            logger.warning(
+                "Refresh unavailable (refresh_token=%s, FYERS_PIN=%s).",
+                "set" if refresh_value else "missing",
+                "set" if pin_value else "missing",
+            )
+
+        if not allow_interactive_oauth:
+            raise AuthenticationError(
+                "Access token expired and automatic recovery failed. "
+                "Set FYERS_PIN and ensure refresh_token exists, or run OAuth login."
+            )
+
+        logger.info("Launching interactive FYERS OAuth login.")
+        token_data = authenticate(token_path=destination)
+        return normalize_raw_access_token(str(token_data["access_token"]))
 
 
 def _open_browser(login_url: str) -> None:
@@ -503,7 +731,31 @@ def main() -> int:
     int
         Process exit code.
     """
+    parser = argparse.ArgumentParser(description="FYERS authentication utilities")
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force refresh-token flow (non-interactive; requires FYERS_PIN)",
+    )
+    parser.add_argument(
+        "--ensure",
+        action="store_true",
+        help="Ensure token is valid (refresh or OAuth as needed)",
+    )
+    args = parser.parse_args()
+
     try:
+        if args.refresh:
+            token = ensure_valid_access_token(
+                allow_interactive_oauth=False,
+                force_refresh=True,
+            )
+            print(f"Access token refreshed ({token[:16]}...)")
+            return 0
+        if args.ensure:
+            token = ensure_valid_access_token(allow_interactive_oauth=True)
+            print(f"Access token ready ({token[:16]}...)")
+            return 0
         authenticate()
         return 0
     except ConfigurationError as exc:

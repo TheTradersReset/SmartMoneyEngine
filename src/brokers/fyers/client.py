@@ -7,7 +7,6 @@ and exposes typed broker API helpers with retry and timeout handling.
 
 from __future__ import annotations
 
-import json
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -17,6 +16,7 @@ from typing import Any, Callable, TypeVar
 import requests
 from fyers_apiv3 import fyersModel
 
+from src.brokers.fyers.auth import AuthenticationError, ensure_valid_access_token
 from src.brokers.fyers.config import ConfigurationError, load_config
 from src.core.logger import logger
 
@@ -116,8 +116,8 @@ class FyersClient:
         """
         Create a client using an access token file and application configuration.
 
-        The access token is read exclusively from ``fyers_token.json``.
-        The application ID is loaded through ``load_config()``.
+        The access token is read from ``fyers_token.json`` and refreshed automatically
+        when expired. The application ID is loaded through ``load_config()``.
 
         Parameters
         ----------
@@ -343,58 +343,47 @@ class FyersClient:
         )
 
 
-def load_access_token(token_path: Path | None = None) -> str:
+def load_access_token(
+    token_path: Path | None = None,
+    *,
+    allow_interactive_oauth: bool = True,
+) -> str:
     """
-    Load and validate a Fyers access token from disk.
+    Load a valid Fyers access token, refreshing or re-authenticating when needed.
 
     Parameters
     ----------
     token_path : Path | None, optional
         Token JSON path. Defaults to ``data/tokens/fyers_token.json``.
+    allow_interactive_oauth : bool, optional
+        When True, launch browser OAuth if refresh fails. When False, raise instead.
 
     Returns
     -------
     str
-        Valid access token string.
+        Valid raw access token string.
 
     Raises
     ------
     TokenNotFoundError
-        If the token file does not exist.
+        If the token file does not exist and interactive OAuth is disabled.
     TokenInvalidError
-        If the token file is invalid or missing ``access_token``.
+        If the token cannot be loaded or recovered.
     """
     destination = token_path if token_path is not None else DEFAULT_TOKEN_PATH
-
-    if not destination.exists():
-        raise TokenNotFoundError(f"Fyers token file not found: {destination}")
-
-    logger.info("Loading Fyers access token from %s", destination)
+    logger.info("Ensuring valid FYERS access token from %s", destination)
 
     try:
-        with destination.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except json.JSONDecodeError as exc:
-        raise TokenInvalidError(
-            f"Invalid JSON in Fyers token file: {destination}"
-        ) from exc
-
-    if not isinstance(payload, dict):
-        raise TokenInvalidError("Fyers token file must contain a JSON object.")
-
-    access_token = payload.get("access_token")
-    if not isinstance(access_token, str) or not access_token.strip():
-        raise TokenInvalidError(
-            f"'access_token' is missing or empty in {destination}"
+        return ensure_valid_access_token(
+            token_path=destination,
+            allow_interactive_oauth=allow_interactive_oauth,
         )
-
-    if payload.get("s") not in (None, "ok"):
-        raise TokenInvalidError(
-            f"Token file indicates unsuccessful authentication: {destination}"
-        )
-
-    logger.info("Fyers access token loaded successfully.")
-    return access_token.strip()
+    except AuthenticationError as exc:
+        message = str(exc)
+        lowered = message.lower()
+        if "not found" in lowered:
+            raise TokenNotFoundError(message) from exc
+        raise TokenInvalidError(message) from exc
 
 
 def main() -> int:
