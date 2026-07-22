@@ -1,0 +1,17 @@
+# Live paper trading defaults (env vars override these values)
+symbol: NSE:NIFTY50-INDEX
+db_path: data/paper/realtime_signals.db
+history_csv: outputs/pipeline/NIFTY50_5m_pipeline.csv
+dashboard_host: 0.0.0.0
+dashboard_port: 8080
+stale_tick_seconds: 30
+heartbeat_seconds: 10
+enable_email: true
+enable_telegram: false
+enable_dashboard: true
+capital_mode: paper
+latency_warn_ms: 500
+# Phase-1 foundations only — keep false until Phase 2+ wiring lands.
+enable_pipeline_v2: false
+live_close_queue_max: 32
+shutdown_drain_sec: 5.0
