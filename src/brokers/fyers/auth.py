@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import getpass
 import hashlib
 import json
 import os
@@ -504,7 +505,9 @@ def refresh_access_token(
         raise AuthenticationError("Refresh token is empty.")
     if not pin or not pin.strip():
         raise AuthenticationError(
-            "FYERS_PIN is required for refresh-token authentication."
+            "FYERS_PIN is required for refresh-token authentication. "
+            "Set FYERS_PIN in the environment, or run "
+            "`python -m src.brokers.fyers.auth` for OAuth login."
         )
 
     payload = {
@@ -610,6 +613,30 @@ def ensure_valid_access_token(
         refresh_value = bundle.get("refresh_token")
         pin_value = _resolve_pin(pin)
 
+        # When refresh_token exists but PIN is missing, prompt interactively (TTY only).
+        # PIN is used for this process only — never written to .env automatically.
+        if (
+            isinstance(refresh_value, str)
+            and refresh_value.strip()
+            and not pin_value
+            and sys.stdin.isatty()
+        ):
+            try:
+                prompted = getpass.getpass(
+                    "FYERS_PIN required for token refresh. Enter PIN: "
+                )
+            except (EOFError, KeyboardInterrupt) as exc:
+                raise AuthenticationError(
+                    "FYERS_PIN is required for token refresh but interactive PIN entry "
+                    "failed. Set FYERS_PIN in the environment, or run "
+                    "`python -m src.brokers.fyers.auth` for OAuth login."
+                ) from exc
+            if prompted and prompted.strip():
+                pin_value = prompted.strip()
+                logger.info("FYERS_PIN collected interactively for this process only.")
+            else:
+                logger.warning("Interactive FYERS_PIN prompt returned empty value.")
+
         if isinstance(refresh_value, str) and refresh_value.strip() and pin_value:
             try:
                 refreshed = refresh_access_token(config, refresh_value, pin_value)
@@ -623,14 +650,16 @@ def ensure_valid_access_token(
         else:
             logger.warning(
                 "Refresh unavailable (refresh_token=%s, FYERS_PIN=%s).",
-                "set" if refresh_value else "missing",
+                "set" if (isinstance(refresh_value, str) and refresh_value.strip()) else "missing",
                 "set" if pin_value else "missing",
             )
 
         if not allow_interactive_oauth:
             raise AuthenticationError(
                 "Access token expired and automatic recovery failed. "
-                "Set FYERS_PIN and ensure refresh_token exists, or run OAuth login."
+                "Set FYERS_PIN (required for refresh when a refresh_token exists) "
+                "or run `python -m src.brokers.fyers.auth` for OAuth login. "
+                "Non-interactive sessions cannot prompt for PIN — export FYERS_PIN."
             )
 
         logger.info("Launching interactive FYERS OAuth login.")

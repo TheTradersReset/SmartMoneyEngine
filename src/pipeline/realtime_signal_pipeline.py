@@ -19,6 +19,7 @@ import pandas as pd
 from src.brokers.websocket_client import FyersWebsocketClient, NIFTY50_SYMBOL
 from src.core.logger import logger
 from src.data.candle_builder import Candle, FiveMinuteCandleBuilder, candles_to_frame_rows, is_trading_session
+from src.live_paper.runtime.watermark import WatermarkStore, normalize_timestamp
 from src.pipeline.candle_diagnostics import (
     build_candle_report,
     decision_record_from_report,
@@ -93,6 +94,8 @@ class RealtimeSignalPipeline:
         self.enable_pipeline_v2: bool = False
         self._live_close_queue = None  # LiveCloseQueue | None
         self._live_eval_worker_tls = threading.local()
+        # Closed-candle commit watermark (source of truth for applied timestamps).
+        self._watermark = WatermarkStore()
 
     def warm_start_from_history(self) -> int:
         """Load historical candles for context warm-start."""
@@ -113,6 +116,10 @@ class RealtimeSignalPipeline:
             raise RealtimeSignalPipelineError("History frame missing Date column.")
         working = frame.reset_index(drop=True)
         self.context.load_history(working)
+        last_date = working.iloc[-1].get("Date")
+        seeded = self._watermark.initialize(last_date)
+        if seeded is not None:
+            logger.info("Watermark seeded from warm-start: %s", seeded.isoformat())
         self._hydrate_pending_outcomes_from_db()
         self._resolve_pending_outcomes_on_frame()
         logger.info("Warm-started market context with %s historical bars.", len(working))
@@ -180,6 +187,40 @@ class RealtimeSignalPipeline:
         with self._lock:
             self._handle_closed_candle(candle)
 
+    def _is_closed_candle_already_committed(self, candle: Candle) -> bool:
+        """
+        True when ``candle.timestamp`` must not be appended (invalid or <= watermark).
+
+        WatermarkStore is the runtime source of truth for committed closed bars.
+        """
+        dt = normalize_timestamp(candle.timestamp)
+        if dt is None:
+            logger.info(
+                "Skipping candle: unparseable timestamp %r",
+                candle.timestamp,
+            )
+            return True
+        current = self._watermark.get()
+        if current is not None and dt <= current:
+            logger.info(
+                "Skipping candle: timestamp %s already committed (watermark=%s)",
+                dt.isoformat(),
+                current.isoformat(),
+            )
+            return True
+        return False
+
+    def _advance_watermark_after_apply(self, candle: Candle) -> None:
+        """Advance watermark only after append + evaluate + persist completed."""
+        if self._watermark.try_advance(candle.timestamp):
+            logger.info("Watermark advanced to %s", self._watermark.as_iso())
+        else:
+            logger.warning(
+                "Watermark did not advance after apply for %s (current=%s)",
+                candle.timestamp.isoformat(),
+                self._watermark.as_iso(),
+            )
+
     def _handle_closed_candle(self, candle: Candle) -> None:
         if self._should_enqueue_for_live_eval():
             self._enqueue_closed_candle_for_live_eval(candle)
@@ -187,6 +228,9 @@ class RealtimeSignalPipeline:
 
         if not is_trading_session(candle.timestamp):
             logger.info("Skipping candle outside session: %s", candle.timestamp)
+            return
+
+        if self._is_closed_candle_already_committed(candle):
             return
 
         total_started = time.perf_counter()
@@ -242,6 +286,7 @@ class RealtimeSignalPipeline:
             self._persist_decision(candle, report)
             emit_candle_report(report, logger=logger)
             self._finalize_profiler(candle, total_started=total_started)
+            self._advance_watermark_after_apply(candle)
             return
 
         signal_started = time.perf_counter()
@@ -357,6 +402,7 @@ class RealtimeSignalPipeline:
         self._persist_decision(candle, report)
         emit_candle_report(report, logger=logger)
         self._finalize_profiler(candle, total_started=total_started)
+        self._advance_watermark_after_apply(candle)
 
     def _finalize_profiler(self, candle: Candle, *, total_started: float) -> None:
         self._profiler.total_processing_ms = (time.perf_counter() - total_started) * 1000.0

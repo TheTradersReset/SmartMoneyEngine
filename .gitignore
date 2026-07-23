@@ -32,3 +32,28 @@ data/reports/
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Temporary
+_tmp*
+*.tmp
+
+# Pytest outputs
+pytest_*.txt
+
+# Audit outputs
+audit_*.txt
+
+# Replay outputs
+replay_output.txt
+replay_changes.txt
+playbook_run_out.txt
+startup_profile_out.txt
+
+# Misc outputs
+_chart_api.txt
+
+# Paper trading runtime
+data/paper/
+
+# Dataset artifacts
+data/datasets/

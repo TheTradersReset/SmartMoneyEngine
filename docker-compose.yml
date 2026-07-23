@@ -1,0 +1,20 @@
+services:
+  live-paper:
+    build: .
+    container_name: smartmoneyengine-live-paper
+    env_file:
+      - .env
+    environment:
+      LIVE_PAPER_CAPITAL_MODE: paper
+      LIVE_PAPER_DASHBOARD_HOST: 0.0.0.0
+      LIVE_PAPER_DASHBOARD_PORT: 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./outputs:/app/outputs
+      - ./config:/app/config:ro
+    # Paper mode only — never mounts or enables live order routing.
+    restart: unless-stopped

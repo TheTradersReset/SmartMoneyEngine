@@ -180,23 +180,32 @@ class SmartMoneyEngineV3Engine(Nifty50LiquidityDirectionDecisionMatrixResearch):
         layer3: dict[str, Any],
         context: dict[str, str],
     ) -> dict[str, Any] | None:
-        outcome = self._trade_outcome(frame, bar, "bearish")
-        if not outcome:
+        """
+        Realtime execution plan for SELL.
+
+        Uses structural stop/risk only. Forward ``_trade_outcome`` is optional
+        enrichment when future bars already exist (research frames) and must
+        never block emission on the live/replay latest bar.
+        """
+        from src.signals.signal_outcome import build_realtime_layer4_plan
+
+        entry = round(float(frame.iloc[bar]["Close"]), 2)
+        stop, risk = self.trade_engine._structural_stop(frame, bar, entry, "bearish")
+        if risk <= 0:
             return None
-        entry = outcome["entry"]
-        risk = outcome["risk_points"]
-        target_liq = outcome.get("target")
-        return {
-            "model_id": self.MODEL_ID,
-            "direction": "SELL",
-            "entry": entry,
-            "stop_loss": outcome["stop_loss"],
-            "target_1": round(float(entry) - risk, 2),
-            "target_2": round(float(entry) - 2 * risk, 2),
-            "target_3": round(float(entry) - 3 * risk, 2),
-            "liquidity_target": target_liq,
-            "risk_points": risk,
-            "signal_reason_stack": {
+        target_liq = self.trade_engine._opposite_liquidity_target(
+            frame, bar, entry, "bearish", risk
+        )
+        # Optional: attach forward stats when available (never required).
+        forward = self._trade_outcome(frame, bar, "bearish") or None
+        return build_realtime_layer4_plan(
+            model_id=self.MODEL_ID,
+            direction="SELL",
+            entry=entry,
+            stop_loss=stop,
+            risk_points=risk,
+            liquidity_target=target_liq,
+            signal_reason_stack={
                 "layer1": layer1["events_detected"],
                 "layer2": {
                     "htf_trend": layer2["htf_trend"],
@@ -209,8 +218,8 @@ class SmartMoneyEngineV3Engine(Nifty50LiquidityDirectionDecisionMatrixResearch):
                 },
                 "location": context.get("location"),
             },
-            "forward_outcome": outcome,
-        }
+            forward_outcome=forward if forward else None,
+        )
 
     def evaluate_bar(
         self,

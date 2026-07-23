@@ -315,6 +315,19 @@ class LivePaperPipeline(RealtimeSignalPipeline):
             self._reconnect_log.info("Recovery fed=%s reason=%s", fed, reason)
         except Exception as exc:  # noqa: BLE001
             self.health.record_error(f"recovery_failed: {exc}")
+        finally:
+            # Align builder with committed watermark so recovered bars are not re-emitted.
+            self._sync_candle_builder_to_watermark()
+
+    def _sync_candle_builder_to_watermark(self) -> None:
+        """Discard obsolete builder buckets at/before the committed watermark."""
+        committed = self._watermark.get()
+        self._candle_builder.sync_after_committed(committed)
+        if committed is not None:
+            self._reconnect_log.info(
+                "Candle builder synced to watermark %s",
+                committed.isoformat(),
+            )
 
     def run(self) -> None:
         """Warm-start, start helpers, connect websocket with reconnect hooks."""

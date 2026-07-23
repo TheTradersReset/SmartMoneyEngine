@@ -117,6 +117,22 @@ class Nifty50LiquidityDirectionDecisionMatrixResearch(Nifty50TrapToMomentumValid
             research_days=RESEARCH_WINDOW_DAYS,
             timeframes=(MOVE_DETECTION_TIMEFRAME,),
         )
+        self._frame_date_cache: dict[int, pd.Series] = {}
+
+    def clear_frame_caches(self) -> None:
+        """Drop cached per-frame datetime indexes (call when OHLCV frames are rebuilt)."""
+        self._frame_date_cache.clear()
+        discovery = getattr(self, "discovery", None)
+        if discovery is not None and hasattr(discovery, "clear_market_levels_cache"):
+            discovery.clear_market_levels_cache()
+
+    def _parsed_frame_dates(self, frame: pd.DataFrame) -> pd.Series:
+        key = id(frame)
+        cached = self._frame_date_cache.get(key)
+        if cached is None:
+            cached = pd.to_datetime(frame["Date"])
+            self._frame_date_cache[key] = cached
+        return cached
 
     @staticmethod
     def _resample_daily(frame_1h: pd.DataFrame) -> pd.DataFrame:
@@ -128,9 +144,8 @@ class Nifty50LiquidityDirectionDecisionMatrixResearch(Nifty50TrapToMomentumValid
         )
         return daily.dropna(subset=["Open", "Close"]).reset_index()
 
-    @staticmethod
-    def _bar_for_timestamp(frame: pd.DataFrame, timestamp: pd.Timestamp) -> int:
-        dates = pd.to_datetime(frame["Date"])
+    def _bar_for_timestamp(self, frame: pd.DataFrame, timestamp: pd.Timestamp) -> int:
+        dates = self._parsed_frame_dates(frame)
         eligible = dates[dates <= timestamp]
         if eligible.empty:
             return 0
@@ -348,6 +363,13 @@ class Nifty50LiquidityDirectionDecisionMatrixResearch(Nifty50TrapToMomentumValid
         bar: int,
         direction: str,
     ) -> dict[str, Any]:
+        """
+        Forward-window trade statistics for a decided signal bar.
+
+        Post-signal evaluation only. Requires bars after ``bar``. Returns ``{}``
+        when forward data is missing — callers must not use emptiness to block
+        BUY/SELL emission (see Layer4 realtime plan builders).
+        """
         entry = round(float(frame.iloc[bar]["Close"]), 2)
         stop, risk = self.trade_engine._structural_stop(frame, bar, entry, direction)
         if risk <= 0:

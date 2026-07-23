@@ -168,6 +168,10 @@ class InstitutionalExpansionTriggerDiscoveryResearch:
         self.intelligence_engine = MarketIntelligenceEngine()
         self.context_builder = FilterContextBuilder()
         self.liquidity_map_engine = InstitutionalLiquidityMapEngine()
+        self._market_levels_cache: dict[tuple[int, int], dict[str, Any]] = {}
+
+    def clear_market_levels_cache(self) -> None:
+        self._market_levels_cache.clear()
 
     @staticmethod
     def _is_active(value: Any) -> bool:
@@ -261,6 +265,10 @@ class InstitutionalExpansionTriggerDiscoveryResearch:
         return self.move_engine._dedupe_cheap_moves(candidates)
 
     def _market_levels(self, frame: pd.DataFrame, index: int) -> dict[str, Any]:
+        cache_key = (id(frame), index)
+        cached = self._market_levels_cache.get(cache_key)
+        if cached is not None:
+            return cached
         start = max(0, index - LOCATION_LOOKBACK)
         window = frame.iloc[start : index + 1]
         close = self._to_float(frame.iloc[index]["Close"]) or 0.0
@@ -301,11 +309,13 @@ class InstitutionalExpansionTriggerDiscoveryResearch:
             distances.append(abs(close - major_resistance))
         nearest_distance = min(distances) if distances else None
 
-        return {
+        result = {
             "major_support": major_support,
             "major_resistance": major_resistance,
             "distance_from_nearest_level": round(nearest_distance, 2) if nearest_distance is not None else None,
         }
+        self._market_levels_cache[cache_key] = result
+        return result
 
     @staticmethod
     def _level_overlap(level: float | None, price: float, tolerance: float = LEVEL_CLUSTER_POINTS) -> bool:
